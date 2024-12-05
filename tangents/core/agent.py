@@ -8,8 +8,17 @@ from rich.markdown import Markdown
 from rich.text import Text
 from rich.live import Live
 from .tool_types import Tool, ToolConfig
+import json
 
 console = Console()
+
+@dataclass
+class AgentInfo:
+    """Information about a registered agent."""
+    agent: Any  # Using Any to avoid circular import
+    description: str
+    capabilities: List[str]
+    status: str = "idle"
 
 @dataclass
 class Agent:
@@ -22,19 +31,100 @@ class Agent:
     max_tokens: int = 4096
     stream: bool = True
     parallel_execution: bool = True
+    is_orchestrator: bool = False  # New parameter to enable orchestrator functionality
     client: Optional[Anthropic] = None
     memory: Dict[str, Any] = field(default_factory=dict)
     tools: Dict[str, Tool] = field(default_factory=dict)
     tool_config: ToolConfig = field(default_factory=lambda: ToolConfig(disable_parallel_tool_use=False))
+    managed_agents: Dict[str, AgentInfo] = field(default_factory=dict)  # Only used when is_orchestrator=True
     
     def __post_init__(self):
-        """Initialize the Anthropic client and configure tools based on parallel execution setting."""
+        """Initialize the Anthropic client and configure based on settings."""
         if self.client is None:
             self.client = Anthropic()
         
         # Configure tool parallelization based on parallel_execution setting
         self.tool_config.disable_parallel_tool_use = not self.parallel_execution
+        
+        # Set up orchestrator capabilities if enabled
+        if self.is_orchestrator:
+            self._setup_orchestrator()
     
+    def _setup_orchestrator(self):
+        """Set up orchestrator capabilities."""
+        # Update system prompt with orchestration capabilities if not already included
+        if "orchestrator" not in self.system_prompt.lower():
+            orchestrator_prompt = """
+            You are also an orchestrator agent that can:
+            1. Break down complex tasks into subtasks
+            2. Assign subtasks to appropriate specialized agents
+            3. Manage parallel execution when possible
+            4. Aggregate and synthesize results
+            5. Ensure quality and consistency
+            6. Handle errors and retries gracefully
+            
+            Use the available orchestration tools to manage agents and tasks effectively.
+            """
+            self.system_prompt = f"{self.system_prompt}\n{orchestrator_prompt}"
+            
+        # Add orchestration tools (will be implemented in next update)
+        self._setup_orchestration_tools()
+    
+    def _setup_orchestration_tools(self):
+        """Set up the orchestration tools."""
+        # Will be implemented in next update
+        pass
+    
+    def orchestrate(self, task: str) -> str:
+        """Main method to orchestrate complex tasks using multiple agents."""
+        if not self.is_orchestrator:
+            return "Error: Agent is not configured as an orchestrator"
+        
+        return self.think(f"""Task to orchestrate: {task}
+        
+        Please:
+        1. Analyze the task and break it down into subtasks
+        2. Identify which agents should handle each subtask
+        3. Execute subtasks in optimal order (parallel when possible)
+        4. Synthesize results into a coherent response
+        
+        Show your work using thinking tags.""")
+    
+    def _handle_register_agent(self, agent_name: str, description: str, 
+                             capabilities: List[str], system_prompt: str) -> str:
+        """Handle registration of a new agent."""
+        if not self.is_orchestrator:
+            return "Error: Agent is not configured as an orchestrator"
+        
+        try:
+            # Create new agent instance
+            new_agent = Agent(
+                name=agent_name,
+                system_prompt=system_prompt,
+                model=self.model,
+                parallel_execution=self.parallel_execution
+            )
+            
+            # Register agent info
+            self.managed_agents[agent_name] = AgentInfo(
+                agent=new_agent,
+                description=description,
+                capabilities=capabilities
+            )
+            
+            return f"Successfully registered agent: {agent_name}"
+        except Exception as e:
+            return f"Failed to register agent: {str(e)}"
+    
+    def _handle_delegate_task(self, agent_name: str, task: str, 
+                            priority: str = "medium") -> str:
+        """Handle task delegation to a specific agent."""
+        if not self.is_orchestrator:
+            return "Error: Agent is not configured as an orchestrator"
+        
+        if agent_name not in self.managed_agents:
+            return f"Error: Agent '{agent_name}' not found"
+        
     def set_parallel_execution(self, enabled: bool) -> None:
         """Enable or disable parallel execution of tools."""
         self.parallel_execution = enabled
